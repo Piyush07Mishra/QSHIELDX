@@ -15,14 +15,15 @@ export async function POST(request: Request) {
 
     const newJob = {
       user_id: user.id,
-      target_domain: payload.domain,
-      status: "running",
+      target_domain: payload.domain || "",
+      status: payload.status || "pending",
       mode: "fast",
       organization_name: payload.organization_name,
-      repository_url: payload.repository_url,
+      repository_url: payload.repository_url || "",
       industry: payload.industry,
       shelf_life_years: payload.shelf_life_years,
       business_criticality: payload.business_criticality,
+      discovery_mode: payload.discovery_mode || "external",
       scan_configuration: payload.scan_configuration || {},
     };
 

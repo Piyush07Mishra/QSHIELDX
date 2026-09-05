@@ -23,26 +23,28 @@ export default function Page() {
   const metrics = useMemo(() => {
     const totalAssets = data.assets?.length || 0;
     
-    // Quantum Readiness (mocked logic based on data)
+    // Quantum Readiness
     const vulnerableAssets = data.assets?.filter(a => 
-      a.vulnerabilities?.some((v: any) => v.severity === 'critical' || v.severity === 'high')
+      data.findings?.some(f => f.asset_id === a.id && (f.severity === 'critical' || f.severity === 'high'))
     ) || [];
     
     const quantumReadyCount = Math.max(0, totalAssets - vulnerableAssets.length);
     const quantumReadyPercent = totalAssets > 0 ? Math.round((quantumReadyCount / totalAssets) * 100) : 0;
     
-    // Vulnerable Algorithms (count of vulnerabilities)
-    const vulnerableAlgosCount = data.assets?.reduce((acc, a) => 
-      acc + (a.vulnerabilities?.length || 0), 0
-    ) || 0;
+    // Vulnerable Algorithms (count of findings)
+    const vulnerableAlgosCount = data.findings?.length || 0;
 
-    // Critical Secrets (assets of type secret)
-    const secretsCount = data.assets?.filter(a => a.type === 'secret' || a.name?.toLowerCase().includes('secret')).length || 0;
+    // Critical Secrets (assets of type secret or findings indicating secrets)
+    const secretsCount = data.findings?.filter(f => f.title?.toLowerCase().includes('secret')).length || 0;
 
     // Migration Priority (sort assets by vulnerability count)
     const migrationPriority = [...(data.assets || [])]
-      .filter(a => a.vulnerabilities?.length > 0)
-      .sort((a, b) => (b.vulnerabilities?.length || 0) - (a.vulnerabilities?.length || 0))
+      .map(a => {
+        const assetFindings = data.findings?.filter(f => f.asset_id === a.id) || [];
+        return { ...a, findingsCount: assetFindings.length, topFinding: assetFindings[0]?.title || "Legacy Cryptography" };
+      })
+      .filter(a => a.findingsCount > 0)
+      .sort((a, b) => b.findingsCount - a.findingsCount)
       .slice(0, 5);
 
     // Cert Expiry (mock logic: assets with type certificate)
@@ -191,8 +193,8 @@ export default function Page() {
                           <ShieldAlert className="size-4" />
                         </div>
                         <div className="flex flex-col">
-                          <span className="font-medium text-sm">{asset.name || "Unknown Asset"}</span>
-                          <span className="text-xs text-muted-foreground font-mono">{asset.type} • {asset.vulnerabilities[0]?.description || "Legacy Cryptography"}</span>
+                          <span className="font-medium text-sm">{asset.asset_value || "Unknown Asset"}</span>
+                          <span className="text-xs text-muted-foreground font-mono">{asset.asset_type} • {asset.topFinding}</span>
                         </div>
                       </div>
                       <Badge variant="destructive">
@@ -224,8 +226,8 @@ export default function Page() {
                     <div className="absolute -left-[5px] top-1.5 size-2.5 rounded-full bg-primary ring-4 ring-background" />
                     <div className="flex flex-col gap-1">
                       <span className="text-xs font-semibold">Scan {target.status === 'Scanning' ? 'Started' : 'Completed'}</span>
-                      <span className="text-sm font-medium">{target.organizationName || target.name}</span>
-                      <span className="text-[10px] text-muted-foreground">{target.lastCompleted || 'Just now'}</span>
+                      <span className="text-sm font-medium">{target.target_domain || target.id}</span>
+                      <span className="text-[10px] text-muted-foreground">{new Date(target.created_at).toLocaleString() || 'Just now'}</span>
                     </div>
                   </div>
                 ))}

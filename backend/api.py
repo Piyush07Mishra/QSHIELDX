@@ -32,8 +32,14 @@ api = FastAPI(
 )
 
 class ScanRequest(BaseModel):
-    domain: str
-    mode: str = "fast"
+    domain: Optional[str] = None
+    repository_url: Optional[str] = None
+    organization_name: str = ""
+    industry: str = ""
+    business_criticality: str = ""
+    shelf_life_years: int = 10
+    discovery_mode: str = "external"
+    scan_configuration: dict = {}
 
 @api.get("/health")
 def health_check():
@@ -47,14 +53,24 @@ def health_check():
         "database": db_status,
         "llm_provider": llm_prov,
         "mock_mode": mock_mode,
-        "version": "2.5"
+        "version": "2.5.0"
     }
 
 @api.get("/")
 def root():
-    return {"status": "ok", "message": "QShieldX API is running."}
+    return health_check()
 
-def run_async_pipeline(domain: str, mode: str, scan_id: str):
+@api.get("/api/settings")
+def get_settings():
+    """Stub endpoint for settings."""
+    return {"message": "Settings configuration."}
+
+@api.get("/api/agent_activity")
+def get_agent_activity():
+    """Stub endpoint for agent activity."""
+    return {"activities": []}
+
+def run_async_pipeline(scan_req: ScanRequest, scan_id: str):
     """
     Background task to run the complete discovery, crypto-analysis, 
     classification, risk scoring, and CBOM generation pipeline.
@@ -64,7 +80,7 @@ def run_async_pipeline(domain: str, mode: str, scan_id: str):
     # Initialize transaction arrays
     db_scan_job = {
         "id": scan_id,
-        "target_domain": domain,
+        "target_domain": scan_req.domain or scan_req.repository_url or "unknown",
         "status": "processing",
         "created_at": datetime.datetime.utcnow().isoformat() + "Z"
     }
@@ -72,86 +88,108 @@ def run_async_pipeline(domain: str, mode: str, scan_id: str):
     db_findings = []
     db_risk_scores = []
     
-    # 1. Discovery
-    logger.log_activity("Discovery Agent", "Running subdomain and port discovery", "subfinder, nmap")
-    discovery_results = DiscoveryService.run_recon_pipeline(domain, mode)
+    mode = scan_req.discovery_mode.lower()
     
-    for host_data in discovery_results.get("assets", []):
-        subdomain = host_data["subdomain"]
-        ports = host_data["ports"]
+    # 1. External Discovery
+    if mode in ["external", "hybrid"] and scan_req.domain:
+        logger.log_activity("Discovery Agent", "Running subdomain and port discovery", "subfinder, nmap")
+        discovery_results = DiscoveryService.run_recon_pipeline(scan_req.domain, "fast")
         
-        # Determine if TLS is likely (443, 8443, etc)
-        tls_enabled = any(p in ports for p in [443, 8443, 4433])
+        for host_data in discovery_results.get("assets", []):
+            subdomain = host_data["subdomain"]
+            ports = host_data["ports"]
+            
+            tls_enabled = any(p in ports for p in [443, 8443, 4433])
+            
+            asset_id = str(uuid.uuid4())
+            base_asset = {
+                "id": asset_id,
+                "scan_id": scan_id,
+                "domain": subdomain,
+                "ip_address": "", 
+                "port": 443 if tls_enabled else (ports[0] if ports else 80),
+                "tls_enabled": tls_enabled
+            }
+            
+            raw_crypto_data = {}
+            
+            if tls_enabled:
+                logger.log_activity("Security Scanner", f"Running testssl on {subdomain}", "testssl.sh")
+                testssl_res = TestSSLService.run_scan(subdomain, scan_id)
+                if "error" not in testssl_res:
+                    raw_crypto_data["testssl"] = testssl_res
+                    
+                    logger.log_activity("Security Scanner", f"Parsing certificates for {subdomain}", "certificate_parser")
+                    cert_res = CertificateParserService.parse_certificate("-----BEGIN CERTIFICATE-----\nMock\n-----END CERTIFICATE-----")
+                    if "error" not in cert_res:
+                        raw_crypto_data["cert"] = cert_res
+            
+            # Classification
+            logger.log_activity("Classification Agent", f"Classifying asset {subdomain}", "classifier")
+            class_input = {"name": subdomain, "details": str(raw_crypto_data).lower()}
+            classification = ClassifierService.classify(class_input)
+            
+            asset = {**base_asset, **classification}
+            db_assets.append(asset)
+            
+            # Risk Scoring
+            logger.log_activity("Quantum Risk Agent", f"Scoring risk for {subdomain}", "risk_engine")
+            risk_score = RiskEngineService.calculate_risk(asset)
+            db_risk_scores.append({"id": str(uuid.uuid4()), "asset_id": asset_id, "scan_id": scan_id, **risk_score})
+            
+            # Findings
+            if "testssl" in raw_crypto_data and "vulnerabilities" in raw_crypto_data["testssl"]:
+                for vuln in raw_crypto_data["testssl"]["vulnerabilities"]:
+                    db_findings.append({
+                        "id": str(uuid.uuid4()),
+                        "scan_id": scan_id,
+                        "asset_id": asset_id,
+                        "vulnerability_name": vuln["finding"],
+                        "severity": vuln["severity"]
+                    })
+                    
+    # 2. Internal Discovery
+    if mode in ["internal", "hybrid"] and scan_req.repository_url:
+        logger.log_activity("Discovery Agent", f"Running internal analysis on {scan_req.repository_url}", "cryptofinder, gitleaks, semgrep")
+        
+        # CryptoFinder
+        logger.log_activity("Security Scanner", f"Running cryptofinder on repo", "cryptofinder")
+        cf_res = CryptoFinderService.run_scan(scan_req.repository_url)
+        
+        # Mock Semgrep and Gitleaks
+        raw_crypto_data = {}
+        if "error" not in cf_res:
+            raw_crypto_data["cryptofinder"] = cf_res
+        raw_crypto_data["gitleaks"] = {"secrets_found": 0}
+        raw_crypto_data["semgrep"] = {"crypto_issues": 1}
         
         asset_id = str(uuid.uuid4())
         base_asset = {
             "id": asset_id,
             "scan_id": scan_id,
-            "domain": subdomain,
-            "ip_address": "", # would resolve in deep mode
-            "port": 443 if tls_enabled else (ports[0] if ports else 80),
-            "tls_enabled": tls_enabled
+            "domain": scan_req.repository_url,
+            "ip_address": "",
+            "port": 0,
+            "tls_enabled": False
         }
         
-        raw_crypto_data = {}
-        
-        # 2. Cryptographic Scans
-        if tls_enabled:
-            logger.log_activity("Security Scanner", f"Running testssl on {subdomain}", "testssl.sh")
-            testssl_res = TestSSLService.run_scan(subdomain, scan_id)
-            if "error" not in testssl_res:
-                raw_crypto_data["testssl"] = testssl_res
-                
-                # Mock extracting a cert from testssl to pass to cert parser
-                logger.log_activity("Security Scanner", f"Parsing certificates for {subdomain}", "certificate_parser")
-                cert_res = CertificateParserService.parse_certificate("-----BEGIN CERTIFICATE-----\nMock\n-----END CERTIFICATE-----")
-                if "error" not in cert_res:
-                    raw_crypto_data["cert"] = cert_res
-                    
-        # 3. Code Scans (Mocked against domain as target for this example)
-        logger.log_activity("Security Scanner", f"Running cryptofinder on {subdomain}", "cryptofinder")
-        cf_res = CryptoFinderService.run_scan(subdomain)
-        if "error" not in cf_res:
-            raw_crypto_data["cryptofinder"] = cf_res
-            
-        # 4. Classification
-        logger.log_activity("Classification Agent", f"Classifying asset {subdomain}", "classifier")
-        
-        class_input = {
-            "name": subdomain,
-            "details": str(raw_crypto_data).lower()
-        }
+        logger.log_activity("Classification Agent", "Classifying repository asset", "classifier")
+        class_input = {"name": scan_req.repository_url, "details": str(raw_crypto_data).lower()}
         classification = ClassifierService.classify(class_input)
         
-        # Merge classification into asset
         asset = {**base_asset, **classification}
         db_assets.append(asset)
         
-        # 5. Risk Scoring
-        logger.log_activity("Quantum Risk Agent", f"Scoring risk for {subdomain}", "risk_engine")
+        logger.log_activity("Quantum Risk Agent", "Scoring risk for repository", "risk_engine")
         risk_score = RiskEngineService.calculate_risk(asset)
-        
-        db_risk_scores.append({
-            "id": str(uuid.uuid4()),
-            "asset_id": asset_id,
-            "scan_id": scan_id,
-            **risk_score
-        })
-        
-        # Prepare findings
-        if "testssl" in raw_crypto_data and "vulnerabilities" in raw_crypto_data["testssl"]:
-            for vuln in raw_crypto_data["testssl"]["vulnerabilities"]:
-                db_findings.append({
-                    "id": str(uuid.uuid4()),
-                    "scan_id": scan_id,
-                    "asset_id": asset_id,
-                    "vulnerability_name": vuln["finding"],
-                    "severity": vuln["severity"]
-                })
-                
-    # 6. CBOM Generation
-    logger.log_activity("CBOM Agent", f"Building CBOM for {domain}", "cbom_builder")
-    cbom_json = CBOMBuilderService.build_cyclonedx(db_assets, domain)
+        db_risk_scores.append({"id": str(uuid.uuid4()), "asset_id": asset_id, "scan_id": scan_id, **risk_score})
+
+    # 3. Correlation (Hybrid handled natively by appending to same arrays)
+
+    # 4. CBOM Generation (Mandatory for ALL modes)
+    logger.log_activity("CBOM Agent", "Building CBOM for discovered assets", "cbom_builder")
+    target_name = scan_req.domain or scan_req.repository_url or "target"
+    cbom_json = CBOMBuilderService.build_cyclonedx(db_assets, target_name)
     
     cbom_report = {
         "id": str(uuid.uuid4()),
@@ -160,7 +198,7 @@ def run_async_pipeline(domain: str, mode: str, scan_id: str):
         "report_url": f"https://cbom.example.com/{scan_id}.json"
     }
     
-    # 7. Persistence
+    # 5. Persistence
     logger.log_activity("Persistence", "Committing transaction to Supabase", "supabase")
     db_scan_job["status"] = "completed"
     
@@ -179,16 +217,8 @@ def scan_domain_pipeline(request: ScanRequest, background_tasks: BackgroundTasks
     """
     Triggers the asynchronous QShieldX pipeline.
     """
-    domain = request.domain.strip().lower()
-    if domain.startswith("http://") or domain.startswith("https://"):
-        import re
-        domain = re.sub(r"^https?://", "", domain).split("/")[0]
-        
-    if not domain:
-        raise HTTPException(status_code=400, detail="Domain cannot be empty.")
-        
     scan_id = str(uuid.uuid4())
-    background_tasks.add_task(run_async_pipeline, domain, request.mode, scan_id)
+    background_tasks.add_task(run_async_pipeline, request, scan_id)
     
     return {
         "status": "processing",

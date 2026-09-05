@@ -11,90 +11,65 @@ import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Button } from "@/components/ui/button"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
+import { createClient } from "@/lib/supabase"
 
-// Mock Agents Data
-const AGENTS = [
-  { name: "Planner Agent", status: "completed", type: "supervisor" },
-  { name: "Discovery Agent", status: "active", type: "worker" },
-  { name: "Classification Agent", status: "pending", type: "worker" },
-  { name: "Threat Intel Agent", status: "pending", type: "worker" },
-  { name: "Quantum Risk Agent", status: "pending", type: "worker" },
-  { name: "CBOM Generator", status: "pending", type: "worker" },
-  { name: "Reporting Agent", status: "pending", type: "worker" },
-]
-
-// Mock Timeline Events
-const TIMELINE_EVENTS = [
-  {
-    id: 1,
-    agent: "Planner Agent",
-    node: "Observe",
-    action: "Analyzed organizational scope",
-    tool: null,
-    runtime: "1.2s",
-    confidence: 0.98,
-    timestamp: "10:42:10 AM",
-    result: "Scope confirmed: 3 domains, 1 repo.",
-    payload: { domains: ["acme.com", "api.acme.com", "dev.acme.com"], repo: "https://github.com/acme/core" }
-  },
-  {
-    id: 2,
-    agent: "Planner Agent",
-    node: "Decide",
-    action: "Generated discovery plan",
-    tool: "LangGraph Router",
-    runtime: "2.5s",
-    confidence: 0.95,
-    timestamp: "10:42:12 AM",
-    result: "Dispatched Discovery Agent with Subfinder & Nmap.",
-    payload: { strategy: "parallel", engines: ["subfinder", "nmap"] }
-  },
-  {
-    id: 3,
-    agent: "Discovery Agent",
-    node: "Tool Used",
-    action: "Executed Subfinder",
-    tool: "subfinder-engine",
-    runtime: "45.0s",
-    confidence: 1.0,
-    timestamp: "10:42:15 AM",
-    result: "Discovered 42 active subdomains.",
-    payload: { subdomains_found: 42, wildcard_detected: false }
-  },
-  {
-    id: 4,
-    agent: "Discovery Agent",
-    node: "Action",
-    action: "Initiating TLS scan on targets",
-    tool: "testssl.sh",
-    runtime: "Ongoing",
-    confidence: 0.88,
-    timestamp: "10:43:00 AM",
-    result: "Scanning in progress...",
-    payload: { target_batch_size: 10, current_batch: 1 }
-  }
-]
-
-const MOCK_LOGS = [
-  "[10:42:00] INFO: Initializing QShieldX Execution Graph...",
-  "[10:42:05] SYSTEM: Connected to Redis Cache.",
-  "[10:42:10] PLANNER: Observe node activated.",
-  "[10:42:12] PLANNER: Transitioning to Decide node.",
-  "[10:42:13] ROUTER: Dispatching Discovery Agent.",
-  "[10:42:15] DISCOVERY: Running Subfinder on acme.com...",
-  "[10:43:00] DISCOVERY: Subfinder complete. 42 targets identified.",
-  "[10:43:01] DISCOVERY: Initiating parallel TLS handshake analysis...",
-  "[10:43:05] TLS_ENGINE: Handshake failed on dev.acme.com:8443 (timeout)",
-  "[10:43:10] TLS_ENGINE: Found RSA 2048 cert on api.acme.com."
-]
+// Type Definitions
+type AgentActivity = {
+  id: string
+  scan_job_id: string
+  tool_used: string
+  command_executed: string
+  output_summary: string
+  status: string
+  executed_at: string
+}
 
 export default function IntelligencePage() {
-  const [expandedEvent, setExpandedEvent] = React.useState<number | null>(null)
+  const [expandedEvent, setExpandedEvent] = React.useState<string | null>(null)
+  const [activities, setActivities] = React.useState<AgentActivity[]>([])
+  const [loading, setLoading] = React.useState(true)
   
+  const supabase = createClient()
+
   React.useEffect(() => {
     document.title = "Intelligence Console | QShieldX Dashboard";
-  }, []);
 
+    const fetchActivities = async () => {
+      const { data, error } = await supabase
+        .from('agent_activity')
+        .select('*')
+        .order('executed_at', { ascending: false })
+        .limit(20)
+      
+      if (data) {
+        setActivities(data)
+      }
+      setLoading(false)
+    }
+
+    fetchActivities()
+
+    // Subscribe to realtime inserts
+    const channel = supabase
+      .channel('agent_activity_changes')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'agent_activity' },
+        (payload) => {
+          const newActivity = payload.new as AgentActivity
+          setActivities(prev => [newActivity, ...prev].slice(0, 50)) // Keep last 50
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [])
+
+  // Derive agent queue state from recent activities
+  const activeAgents = Array.from(new Set(activities.map(a => a.tool_used)))
+  
   return (
     <div className="flex h-full flex-col gap-6 p-4 md:p-8 animate-in fade-in duration-300">
       
@@ -117,22 +92,19 @@ export default function IntelligencePage() {
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <Network className="size-4 text-primary" />
-              Agent Queue
+              Active Tools / Agents
             </CardTitle>
-            <CardDescription className="text-xs">Execution status of LangGraph nodes.</CardDescription>
+            <CardDescription className="text-xs">Tools recently executed in pipelines.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
-            {AGENTS.map((agent, idx) => (
+            {activeAgents.length === 0 && <p className="text-xs text-muted-foreground">No recent activity.</p>}
+            {activeAgents.map((tool, idx) => (
               <div key={idx} className="flex items-center justify-between p-2 rounded-md border bg-card text-sm">
                 <div className="flex items-center gap-2">
-                  {agent.status === "completed" && <CheckCircle2 className="size-4 text-emerald-500" />}
-                  {agent.status === "active" && <Activity className="size-4 text-amber-500 animate-pulse" />}
-                  {agent.status === "pending" && <Clock className="size-4 text-muted-foreground" />}
-                  <span className={`font-medium ${agent.status === 'pending' ? 'text-muted-foreground' : ''}`}>{agent.name}</span>
+                  <Activity className="size-4 text-amber-500 animate-pulse" />
+                  <span className="font-medium capitalize">{tool}</span>
                 </div>
-                <Badge variant={agent.type === 'supervisor' ? 'default' : 'secondary'} className="text-[10px]">
-                  {agent.type}
-                </Badge>
+                <Badge variant="secondary" className="text-[10px]">Active</Badge>
               </div>
             ))}
           </CardContent>
@@ -153,10 +125,14 @@ export default function IntelligencePage() {
             </div>
           </CardHeader>
           <CardContent className="flex-1 overflow-y-auto pr-2 space-y-4 custom-scrollbar pb-4">
-            {TIMELINE_EVENTS.map((ev, idx) => (
+            {loading ? (
+              <div className="text-sm text-muted-foreground">Loading activities...</div>
+            ) : activities.length === 0 ? (
+              <div className="text-sm text-muted-foreground">No activities found. Start a scan to see timeline.</div>
+            ) : activities.map((ev, idx) => (
               <div key={ev.id} className="relative pl-6 pb-2">
                 {/* Timeline line */}
-                {idx !== TIMELINE_EVENTS.length - 1 && (
+                {idx !== activities.length - 1 && (
                   <div className="absolute left-[11px] top-6 bottom-[-16px] w-[2px] bg-border" />
                 )}
                 {/* Timeline dot */}
@@ -165,39 +141,18 @@ export default function IntelligencePage() {
                 <div className="rounded-lg border bg-card p-3 shadow-sm hover:border-primary/50 transition-colors">
                   <div className="flex justify-between items-start mb-2">
                     <div className="flex items-center gap-2">
-                      <Badge variant="secondary" className="text-[10px] uppercase font-mono">{ev.agent}</Badge>
+                      <Badge variant="secondary" className="text-[10px] uppercase font-mono">{ev.tool_used}</Badge>
                       <ChevronRight className="size-3 text-muted-foreground" />
-                      <Badge variant="outline" className="text-[10px] uppercase font-mono text-primary border-primary/30 bg-primary/5">{ev.node}</Badge>
+                      <Badge variant="outline" className={`text-[10px] uppercase font-mono border-primary/30 bg-primary/5 ${ev.status === 'failed' ? 'text-destructive border-destructive/30 bg-destructive/5' : 'text-primary'}`}>{ev.status}</Badge>
                     </div>
-                    <span className="text-xs font-mono text-muted-foreground">{ev.timestamp}</span>
+                    <span className="text-xs font-mono text-muted-foreground">{new Date(ev.executed_at).toLocaleTimeString()}</span>
                   </div>
                   
-                  <p className="text-sm font-medium mb-1">{ev.action}</p>
+                  <p className="text-sm font-medium mb-1">{ev.command_executed}</p>
                   
-                  <div className="flex flex-wrap gap-x-4 gap-y-2 mt-3 text-xs text-muted-foreground">
-                    {ev.tool && (
-                      <div className="flex items-center gap-1">
-                        <Terminal className="size-3" /> Tool: <span className="text-foreground font-mono">{ev.tool}</span>
-                      </div>
-                    )}
-                    <div className="flex items-center gap-1">
-                      <Clock className="size-3" /> Runtime: <span className="text-foreground font-mono">{ev.runtime}</span>
-                    </div>
-                    <HoverCard>
-                      <HoverCardTrigger asChild>
-                        <div className="flex items-center gap-1 cursor-help border-b border-dashed border-muted-foreground/50">
-                          <Activity className="size-3" /> Conf: <span className="text-foreground font-mono">{ev.confidence}</span>
-                        </div>
-                      </HoverCardTrigger>
-                      <HoverCardContent className="w-60 text-xs">
-                        LLM Confidence score based on tool output validation and prompt adherence.
-                      </HoverCardContent>
-                    </HoverCard>
-                  </div>
-
                   <div className="mt-3 p-2 bg-muted/50 rounded text-xs border-l-2 border-primary">
-                    <span className="font-semibold text-foreground/80">Result: </span>
-                    {ev.result}
+                    <span className="font-semibold text-foreground/80">Output: </span>
+                    {ev.output_summary}
                   </div>
 
                   {/* JSON Payload Drawer Toggle */}
@@ -208,14 +163,14 @@ export default function IntelligencePage() {
                       className="h-6 text-[10px] text-muted-foreground gap-1"
                       onClick={() => setExpandedEvent(expandedEvent === ev.id ? null : ev.id)}
                     >
-                      <FileJson className="size-3" /> {expandedEvent === ev.id ? 'Hide Payload' : 'View Payload'} 
+                      <FileJson className="size-3" /> {expandedEvent === ev.id ? 'Hide Details' : 'View Details'} 
                       {expandedEvent === ev.id ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
                     </Button>
                   </div>
                   
                   {expandedEvent === ev.id && (
                     <div className="mt-2 p-2 bg-black/90 dark:bg-black/40 rounded-md overflow-x-auto text-green-400 font-mono text-[10px] border border-primary/20">
-                      <pre>{JSON.stringify(ev.payload, null, 2)}</pre>
+                      <pre>{JSON.stringify(ev, null, 2)}</pre>
                     </div>
                   )}
 
@@ -239,10 +194,9 @@ export default function IntelligencePage() {
             <div className="space-y-2">
               <div className="flex justify-between text-xs font-medium">
                 <span>Overall Progress</span>
-                <span className="text-primary font-mono">28%</span>
+                <span className="text-primary font-mono">Real-time</span>
               </div>
-              <Progress value={28} className="h-2" />
-              <div className="text-[10px] text-muted-foreground text-right font-mono">Est. Time Remaining: 38m 12s</div>
+              <Progress value={activities.length > 0 ? 50 : 0} className="h-2" />
             </div>
 
             <div className="space-y-3">
@@ -251,35 +205,10 @@ export default function IntelligencePage() {
               <div className="flex justify-between items-center bg-card p-2 rounded border shadow-sm">
                 <div className="flex items-center gap-2">
                   <Database className="size-4 text-emerald-500" />
-                  <span className="text-sm font-medium">Assets Mapped</span>
+                  <span className="text-sm font-medium">Total Events</span>
                 </div>
-                <span className="font-mono font-bold">142</span>
+                <span className="font-mono font-bold">{activities.length}</span>
               </div>
-              
-              <div className="flex justify-between items-center bg-card p-2 rounded border shadow-sm">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="size-4 text-blue-500" />
-                  <span className="text-sm font-medium">Certs Parsed</span>
-                </div>
-                <span className="font-mono font-bold">38</span>
-              </div>
-
-              <div className="flex justify-between items-center bg-card p-2 rounded border shadow-sm">
-                <div className="flex items-center gap-2">
-                  <Binary className="size-4 text-purple-500" />
-                  <span className="text-sm font-medium">Algorithms Found</span>
-                </div>
-                <span className="font-mono font-bold">12</span>
-              </div>
-              
-              <div className="flex justify-between items-center bg-card p-2 rounded border shadow-sm border-amber-500/30">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="size-4 text-amber-500" />
-                  <span className="text-sm font-medium">Secrets Exposed</span>
-                </div>
-                <span className="font-mono font-bold text-amber-500">2</span>
-              </div>
-
             </div>
 
           </CardContent>
@@ -302,14 +231,16 @@ export default function IntelligencePage() {
             <span className="text-[10px] text-green-400/60 uppercase">Streaming WebSocket</span>
           </div>
         </div>
-        <div className="p-4 flex-1 overflow-y-auto text-[11px] leading-relaxed custom-scrollbar">
-          {MOCK_LOGS.map((log, i) => (
-            <div key={i} className="hover:bg-white/5 px-1 rounded transition-colors break-all">
-              {log}
+        <div className="p-4 flex-1 overflow-y-auto text-[11px] leading-relaxed custom-scrollbar flex flex-col-reverse">
+          {/* Blinking cursor at bottom (flex-col-reverse makes first item bottom) */}
+          <div className="inline-block w-2 h-3 bg-green-400 animate-pulse ml-1 mt-1" />
+          {activities.slice(0, 15).map((log, i) => (
+            <div key={log.id} className="hover:bg-white/5 px-1 rounded transition-colors break-all flex gap-2">
+              <span className="text-green-600">[{new Date(log.executed_at).toLocaleTimeString()}]</span>
+              <span className="text-green-500">[{log.tool_used.toUpperCase()}]</span>
+              <span>{log.command_executed} - {log.status}</span>
             </div>
           ))}
-          {/* Blinking cursor */}
-          <div className="inline-block w-2 h-3 bg-green-400 animate-pulse ml-1 mt-1" />
         </div>
       </Card>
       
