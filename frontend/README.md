@@ -1,122 +1,54 @@
-# CYB Infrastructure Dashboard
+# QShieldX Frontend
 
-This is the Next.js frontend and API layer for the CYB Infrastructure Dashboard. It interfaces with MongoDB to present structured data regarding monitoring targets, assets, exposed services, and network topologies.
+The frontend interface for **QShieldX** — an Enterprise Cryptographic Discovery & Post-Quantum Readiness Platform.
 
-## Information Architecture
+Built for high-performance telemetry rendering, realtime agent tracking, and enterprise-grade cryptographic reporting.
 
-The application is structured using the Next.js App Router. The diagram below illustrates the hierarchical layout of the pages and their core functions.
+## 🛠 Tech Stack
 
-```mermaid
-graph TD
-    A[Dashboard Root & Auth] --> B[Authentication]
-    B --> B1["/login"]
-    B --> B2["/register"]
-    
-    A --> C[Core Data Views]
-    C --> C1["/targets : Monitoring Scopes"]
-    C --> C2["/assets : Discovered Assets"]
-    C --> C3["/services : Exposed Services"]
-    C --> C4["/ports : Open Ports"]
-    
-    A --> D[Visualizations & Settings]
-    D --> D1["/topology : Network Map"]
-    D --> D2["/settings : Configurations"]
-    
-    C1 --> C1a["/targets/new : Onboard Target"]
-    C1 --> C1b["/targets/[id] : Target Details"]
-    C2 --> C2a["/assets/[id] : Asset Details"]
-```
+- **Framework:** Next.js 14 (App Router)
+- **UI Library:** React 18
+- **Styling:** Tailwind CSS v4
+- **Component System:** shadcn/ui (Radix UI under the hood)
+- **State Management & Data:** React Context API + Supabase Realtime
+- **Icons:** Lucide React
 
-## Database Schema (MongoDB)
+## 🚀 Key Modules
 
-The data is persisted in MongoDB (`cyb_dashboard` database). The entity relationships below describe how targets own assets, which in turn expose services and bind to specific ports.
+1. **Dashboard (`/`)**: High-level executive overview of cryptographic posture, migration priorities, and post-quantum readiness.
+2. **Discovery Wizard (`/targets/new`)**: 4-step enterprise onboarding workflow (Scope, Discovery Mode, AI Configuration, and Planner Validation). Supports External, Internal, and Hybrid targeting.
+3. **Intelligence Console (`/intelligence`)**: Realtime streaming telemetry of LangGraph AI Agent nodes directly from Supabase WebSockets.
+4. **CBOM Reports (`/cbom`)**: Native CycloneDX 1.7 Cyber Bill of Materials repository and visualization.
 
-```mermaid
-erDiagram
-    TARGET {
-        string _id PK "e.g. TGT-001"
-        string organizationName
-        string primaryDomain
-        string[] additionalDomains
-        string[] ipRanges
-        string status "Scanning, Idle, Paused"
-        int assetsDiscovered 
-    }
-    
-    ASSET {
-        string _id PK "e.g. AST-001"
-        string targetId FK "Links to TARGET"
-        string name 
-        string type "Server, Gateway, DB..."
-        string internalIp
-        string externalIp
-        int overallScore
-    }
-    
-    SERVICE {
-        string _id PK "e.g. SRV-HTTP"
-        string name 
-        string type "HTTP, MQTT..."
-        string version
-        int aggregateRiskScore
-    }
-    
-    PORT {
-        string _id PK "e.g. PRT-3389"
-        int portNumber
-        string protocol "TCP, UDP"
-        string description
-        int exposureSeverity
-    }
+## 📦 Setup & Installation
 
-    TARGET ||--o{ ASSET : "owns"
-    ASSET ||--o{ SERVICE : "exposes"
-    ASSET }|--|| PORT : "listens on"
-```
+Ensure you have Node.js 18+ installed.
 
-## App Routes & API Workings
+1. **Install Dependencies:**
+   ```bash
+   npm install
+   ```
 
-The diagram below details how the frontend interacts with the Next.js API Routes and the underlying Database to fetch data and trigger scan agents.
+2. **Environment Variables:**
+   Create a `.env.local` file at the root of the `frontend/` directory with the following variables:
+   ```env
+   NEXT_PUBLIC_SUPABASE_URL="your-supabase-url"
+   NEXT_PUBLIC_SUPABASE_ANON_KEY="your-anon-key"
+   ```
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant AppRouter as Next.js UI Router
-    participant API as Next.js API (/api)
-    participant DB as MongoDB
+3. **Start Development Server:**
+   ```bash
+   npm run dev
+   ```
+   Access the frontend at [http://localhost:3000](http://localhost:3000).
 
-    User->>AppRouter: Navigates to /targets
-    AppRouter->>API: GET /api/targets
-    API->>DB: db.collection('targets').find()
-    DB-->>API: JSON Targets Array
-    API-->>AppRouter: Returns data
-    AppRouter-->>User: Renders targets datatable
+## 🏗 Architecture Decisions
 
-    User->>AppRouter: Adds New Target (/targets/new)
-    AppRouter->>API: POST /api/targets { domain, org }
-    API->>DB: db.collection('targets').insertOne()
-    DB-->>API: Returns Success (_id)
-    API-->>AppRouter: Target created response
-    AppRouter->>API: POST /api/agent/scan (Initialize Scanning)
-    AppRouter-->>User: Redirects to /targets
-```
+- **Supabase Realtime (`@supabase/ssr`)**: Leveraged for bidirectional real-time feeds without the overhead of maintaining custom WebSocket infrastructure. Used extensively in the Intelligence Console.
+- **Server Components (RSC) vs Client Components**: We prioritize Server Components for static rendering and SEO, while opting for `"use client"` primarily at the leaves of the component tree or where hooks/Realtime subscriptions are strictly necessary.
 
-## Setup & Development
+## 🤝 Contributing
+For broad architectural contributions, please refer to the root `README.md` of the QShieldX repository.
 
-First, run the development server:
-
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-Environment variables required:
-- `MONGODB_URI`: Pointer to your MongoDB cluster instance for backend data persistence.
-
+---
+*Developed for QShieldX Platform*
