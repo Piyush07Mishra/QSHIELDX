@@ -141,7 +141,30 @@ export default function IntelligencePage() {
                 <div className="rounded-lg border bg-card p-3 shadow-sm hover:border-primary/50 transition-colors">
                   <div className="flex justify-between items-start mb-2">
                     <div className="flex items-center gap-2">
-                      <Badge variant="secondary" className="text-[10px] uppercase font-mono">{ev.tool_used}</Badge>
+                      <HoverCard>
+                        <HoverCardTrigger asChild>
+                          <Badge variant="secondary" className="text-[10px] uppercase font-mono cursor-pointer hover:bg-primary/20 transition-colors">{ev.tool_used}</Badge>
+                        </HoverCardTrigger>
+                        <HoverCardContent className="w-80 bg-background/95 backdrop-blur border-primary/20">
+                          <div className="flex justify-between space-x-4">
+                            <div className="space-y-1">
+                              <h4 className="text-sm font-semibold capitalize flex items-center gap-2">
+                                <BrainCircuit className="size-4 text-primary" />
+                                {ev.tool_used} Agent
+                              </h4>
+                              <p className="text-xs text-muted-foreground">
+                                Autonomous agent executing `{ev.command_executed.split(' ')[0]}` instructions within the QShieldX LangGraph workflow.
+                              </p>
+                              <div className="flex items-center pt-2">
+                                <Clock className="mr-2 h-3 w-3 opacity-70" />
+                                <span className="text-xs text-muted-foreground">
+                                  Executed at {new Date(ev.executed_at).toLocaleTimeString()}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </HoverCardContent>
+                      </HoverCard>
                       <ChevronRight className="size-3 text-muted-foreground" />
                       <Badge variant="outline" className={`text-[10px] uppercase font-mono border-primary/30 bg-primary/5 ${ev.status === 'failed' ? 'text-destructive border-destructive/30 bg-destructive/5' : 'text-primary'}`}>{ev.status}</Badge>
                     </div>

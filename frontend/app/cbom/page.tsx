@@ -26,6 +26,7 @@ import "@xyflow/react/dist/style.css"
 export default function CBOMPage() {
   const [reports, setReports] = React.useState<any[]>([])
   const [selectedReport, setSelectedReport] = React.useState<any>(null)
+  const [findings, setFindings] = React.useState<any[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
   const [copied, setCopied] = React.useState(false)
   const supabase = createClient()
@@ -36,7 +37,7 @@ export default function CBOMPage() {
     async function fetchReports() {
       const { data, error } = await supabase
         .from('cbom_reports')
-        .select(`*, scan_jobs ( target_domain )`)
+        .select(`*, scan_jobs ( id, target_domain )`)
         .order('created_at', { ascending: false })
       
       if (!error && data) {
@@ -51,6 +52,23 @@ export default function CBOMPage() {
     fetchReports()
   }, [])
 
+  React.useEffect(() => {
+    async function fetchFindings() {
+      if (!selectedReport?.scan_jobs?.id) return;
+      const { data, error } = await supabase
+        .from('findings')
+        .select('*')
+        .eq('scan_job_id', selectedReport.scan_jobs.id)
+      
+      if (!error && data) {
+        setFindings(data)
+      } else {
+        setFindings([])
+      }
+    }
+    fetchFindings()
+  }, [selectedReport])
+
   const handleDownload = (format: string) => {
     if (!selectedReport?.report_json) return;
     let content = "";
@@ -61,7 +79,10 @@ export default function CBOMPage() {
       content = JSON.stringify(selectedReport.report_json, null, 2);
       mime = "application/json";
     } else if (format === 'CSV') {
-      content = "Asset,Type,Algorithm,Vulnerability\napi.acme.com,Certificate,RSA-1024,High";
+      content = "Asset,Title,Severity\n";
+      findings.forEach(f => {
+        content += `${f.asset_id || 'Unknown'},${f.title},${f.severity}\n`;
+      });
       mime = "text/csv";
     } else {
       content = `# CBOM Report\n\nGenerated for ${selectedReport.scan_jobs?.target_domain}\n`;
@@ -87,12 +108,12 @@ export default function CBOMPage() {
     }
   }
 
-  // React Flow Mock Nodes
+  // React Flow Mock Nodes (Keep this until real topology mapping is built)
   const initialNodes = [
-    { id: '1', position: { x: 250, y: 0 }, data: { label: 'acme.com (Root)' }, style: { backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px' } },
-    { id: '2', position: { x: 100, y: 100 }, data: { label: 'api.acme.com (TLS 1.2)' }, style: { backgroundColor: '#f59e0b', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px' } },
-    { id: '3', position: { x: 400, y: 100 }, data: { label: 'dev.acme.com (TLS 1.3)' }, style: { backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px' } },
-    { id: '4', position: { x: 100, y: 200 }, data: { label: 'RSA-1024 Cert' }, style: { backgroundColor: '#ef4444', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px' } },
+    { id: '1', position: { x: 250, y: 0 }, data: { label: 'Root Domain' }, style: { backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px' } },
+    { id: '2', position: { x: 100, y: 100 }, data: { label: 'Web Server' }, style: { backgroundColor: '#f59e0b', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px' } },
+    { id: '3', position: { x: 400, y: 100 }, data: { label: 'API Gateway' }, style: { backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px' } },
+    { id: '4', position: { x: 100, y: 200 }, data: { label: 'Legacy Cert' }, style: { backgroundColor: '#ef4444', color: '#fff', border: 'none', borderRadius: '8px', padding: '10px' } },
   ];
   const initialEdges = [
     { id: 'e1-2', source: '1', target: '2', animated: true },
@@ -204,24 +225,24 @@ export default function CBOMPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    <TableRow>
-                      <TableCell className="font-medium">api.acme.com:443</TableCell>
-                      <TableCell>TLS Endpoint</TableCell>
-                      <TableCell className="font-mono text-xs">TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256</TableCell>
-                      <TableCell><Badge variant="outline">Secure</Badge></TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell className="font-medium">dev.acme.com:8443</TableCell>
-                      <TableCell>TLS Endpoint</TableCell>
-                      <TableCell className="font-mono text-xs text-destructive">TLS_RSA_WITH_AES_128_CBC_SHA</TableCell>
-                      <TableCell><Badge variant="destructive">Deprecated</Badge></TableCell>
-                    </TableRow>
-                    <TableRow>
-                      <TableCell className="font-medium">auth_service/jwt.js</TableCell>
-                      <TableCell>Source Code</TableCell>
-                      <TableCell className="font-mono text-xs">HMAC-SHA256 (Hardcoded Key)</TableCell>
-                      <TableCell><Badge variant="destructive">Critical</Badge></TableCell>
-                    </TableRow>
+                    {findings.length > 0 ? findings.map((finding) => (
+                      <TableRow key={finding.id}>
+                        <TableCell className="font-medium">{finding.asset_id || "Unknown Component"}</TableCell>
+                        <TableCell>{finding.finding_type || "Cryptography"}</TableCell>
+                        <TableCell className="font-mono text-xs">{finding.title}</TableCell>
+                        <TableCell>
+                          <Badge variant={finding.severity === 'critical' || finding.severity === 'high' ? 'destructive' : 'outline'}>
+                            {finding.severity}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    )) : (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                          No findings available for this report.
+                        </TableCell>
+                      </TableRow>
+                    )}
                   </TableBody>
                 </Table>
               </div>

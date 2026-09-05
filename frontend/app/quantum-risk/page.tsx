@@ -27,13 +27,25 @@ export default function QuantumRiskPage() {
   }, [])
 
   // Derived mock data for advanced PQC visualizations based on existing assets
-  const algorithms = [
-    { algo: "RSA-1024", keySize: "1024-bit", tls: "TLS 1.2", cert: "api.acme.com", pqc: "ML-KEM (Kyber)", status: "Critical" },
-    { algo: "RSA-2048", keySize: "2048-bit", tls: "TLS 1.3", cert: "dev.acme.com", pqc: "ML-KEM (Kyber)", status: "High" },
-    { algo: "ECC P-256", keySize: "256-bit", tls: "TLS 1.3", cert: "admin.acme.local", pqc: "ML-DSA (Dilithium)", status: "Medium" },
-    { algo: "SHA-1", keySize: "160-bit", tls: "N/A", cert: "Legacy Codebase", pqc: "SHA-3", status: "Critical" },
-    { algo: "AES-256-GCM", keySize: "256-bit", tls: "TLS 1.3", cert: "database.acme.internal", pqc: "None Required", status: "Safe" },
-  ]
+  const algorithms = React.useMemo(() => {
+    if (!data.findings || data.findings.length === 0) {
+      return [
+        { algo: "RSA-1024", keySize: "1024-bit", tls: "TLS 1.2", cert: "api.acme.com", pqc: "ML-KEM (Kyber)", status: "Critical" },
+        { algo: "RSA-2048", keySize: "2048-bit", tls: "TLS 1.3", cert: "dev.acme.com", pqc: "ML-KEM (Kyber)", status: "High" },
+        { algo: "ECC P-256", keySize: "256-bit", tls: "TLS 1.3", cert: "admin.acme.local", pqc: "ML-DSA (Dilithium)", status: "Medium" },
+        { algo: "SHA-1", keySize: "160-bit", tls: "N/A", cert: "Legacy Codebase", pqc: "SHA-3", status: "Critical" },
+        { algo: "AES-256-GCM", keySize: "256-bit", tls: "TLS 1.3", cert: "database.acme.internal", pqc: "None Required", status: "Safe" },
+      ];
+    }
+    return data.findings.map(f => ({
+      algo: f.title,
+      keySize: "Variable",
+      tls: "Variable",
+      cert: f.asset_id || "Unknown Component",
+      pqc: f.severity === 'critical' || f.severity === 'high' ? "ML-KEM / ML-DSA" : "N/A",
+      status: f.severity === 'critical' ? 'Critical' : f.severity === 'high' ? 'High' : 'Medium'
+    }));
+  }, [data.findings]);
 
   const recommendations = [
     { 
